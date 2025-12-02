@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# YOLO models
+*.pt
+*.pth
+*.weights
+
+# Data
+data/snapshots/*.jpg
+data/snapshots/*.png
+
+# Logs
+*.log
+logs/
