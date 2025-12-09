@@ -28,32 +28,49 @@ class RTSPClient:
         Returns:
             True if connection successful, False otherwise
         """
-        try:
-            # Set FFmpeg environment variables for HEVC support
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp"
+        # Try TCP first (more reliable), then UDP if TCP fails
+        protocols = ['tcp', 'udp']
 
-            # Use FFMPEG backend explicitly for better HEVC support
-            self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+        for protocol in protocols:
+            try:
+                print(f"Trying RTSP with {protocol.upper()} protocol...")
 
-            # Quality and performance settings
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
+                # Set FFmpeg environment variables
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"rtsp_transport;{protocol}|rtsp_flags;prefer_tcp"
 
-            # Set timeout (in milliseconds)
-            self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout * 1000)
-            self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout * 1000)
+                # Use FFMPEG backend explicitly for better HEVC support
+                self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
 
-            if self.cap.isOpened():
-                # Test read a frame
-                ret, _ = self.cap.read()
-                if ret:
-                    self.is_connected = True
-                    return True
+                # Quality and performance settings
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer for faster connection
 
-            return False
+                # Set timeout (in milliseconds)
+                self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout * 1000)
+                self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout * 1000)
 
-        except Exception as e:
-            print(f"RTSP connection error: {e}")
-            return False
+                if self.cap.isOpened():
+                    print(f"  Stream opened with {protocol.upper()}, testing frame read...")
+                    # Test read a frame
+                    ret, frame = self.cap.read()
+                    if ret and frame is not None:
+                        print(f"✅ Connected successfully via {protocol.upper()}")
+                        self.is_connected = True
+                        return True
+                    else:
+                        print(f"  Failed to read frame with {protocol.upper()}")
+                        self.cap.release()
+                        self.cap = None
+                else:
+                    print(f"  Failed to open stream with {protocol.upper()}")
+
+            except Exception as e:
+                print(f"RTSP connection error with {protocol.upper()}: {e}")
+                if self.cap is not None:
+                    self.cap.release()
+                    self.cap = None
+
+        print("❌ All connection attempts failed")
+        return False
 
     def capture_frame(self) -> Optional[np.ndarray]:
         """Capture a single frame from the stream.
