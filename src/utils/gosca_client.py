@@ -25,12 +25,25 @@ class Seat:
 
 
 class GoScaClient:
-    """Client for fetching seat data from GoSca system."""
+    """Client for fetching seat data from GoSca system.
 
-    BASE_URL = "https://gosca.co.kr"
-    STORE_ID = "Anding-Oryudongyeok-sca"
+    Supports multiple store locations via environment variables.
+    """
 
-    def __init__(self):
+    def __init__(self, store_id: Optional[str] = None, base_url: Optional[str] = None):
+        """Initialize GoSca client.
+
+        Args:
+            store_id: GoSca store ID (e.g., 'Anding-Oryudongyeok-sca')
+                     If None, uses GOSCA_STORE_ID from settings
+            base_url: GoSca API base URL
+                     If None, uses GOSCA_BASE_URL from settings
+        """
+        from src.config import settings
+
+        self.base_url = base_url or settings.GOSCA_BASE_URL
+        self.store_id = store_id or settings.GOSCA_STORE_ID
+
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
@@ -42,8 +55,8 @@ class GoScaClient:
         Returns:
             List of Seat objects
         """
-        url = f"{self.BASE_URL}/gosca/seatlist"
-        params = {"pstore": self.STORE_ID}
+        url = f"{self.base_url}/gosca/seatlist"
+        params = {"pstore": self.store_id}
 
         try:
             response = self.session.get(url, params=params, timeout=10)
@@ -180,16 +193,22 @@ class GoScaClient:
         return None
 
 
-def export_seats_to_json(output_path: str = "data/gosca_seats.json"):
+def export_seats_to_json(store_id: Optional[str] = None, output_path: Optional[str] = None):
     """Export seat data to JSON file for mapping to CCTV ROIs.
 
     Args:
-        output_path: Path to save JSON file
+        store_id: GoSca store ID (uses env default if None)
+        output_path: Path to save JSON file (auto-generated if None)
     """
     from pathlib import Path
 
-    client = GoScaClient()
+    client = GoScaClient(store_id=store_id)
     result = client.get_seat_grid()
+
+    # Auto-generate output path based on store_id
+    if output_path is None:
+        store_name = client.store_id.replace('-', '_').lower()
+        output_path = f"data/gosca_seats_{store_name}.json"
 
     # Convert Seat objects to dict for JSON serialization
     seats_data = []
@@ -213,7 +232,8 @@ def export_seats_to_json(output_path: str = "data/gosca_seats.json"):
             })
 
     output = {
-        'store_id': GoScaClient.STORE_ID,
+        'store_id': client.store_id,
+        'base_url': client.base_url,
         'dimensions': result['dimensions'],
         'total_seats': len(seats_data),
         'seats': seats_data
@@ -228,6 +248,11 @@ def export_seats_to_json(output_path: str = "data/gosca_seats.json"):
 
 
 if __name__ == "__main__":
+    # Add parent dir to path for imports
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
     # Test the client
     client = GoScaClient()
 

@@ -52,6 +52,10 @@ class Settings:
     API_HOST = os.getenv("API_HOST", "0.0.0.0")
     API_PORT = int(os.getenv("API_PORT", "8000"))
 
+    # GoSca 좌석 관리 시스템 설정
+    GOSCA_BASE_URL = os.getenv("GOSCA_BASE_URL", "https://gosca.co.kr")
+    GOSCA_STORE_ID = os.getenv("GOSCA_STORE_ID", "Anding-Oryudongyeok-sca")
+
     def get_rtsp_url(self, path: str = None) -> str:
         """Generate RTSP URL.
 
