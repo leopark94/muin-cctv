@@ -1,26 +1,44 @@
 """ROI (Region of Interest) matching for seat occupancy detection."""
 import json
 import numpy as np
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Union
 from pathlib import Path
 
 
 class ROIMatcher:
     """Match person detections with seat ROIs."""
 
-    def __init__(self, roi_config_path: Path = None):
+    def __init__(self, roi_config: Union[Path, Dict, None] = None):
         """Initialize ROI matcher.
 
         Args:
-            roi_config_path: Path to ROI configuration JSON file
+            roi_config: Path to ROI configuration JSON file or dict config
         """
-        self.roi_config_path = roi_config_path
+        self.roi_config_path = None
         self.seats = []
         self.camera_id = None
         self.resolution = None
 
-        if roi_config_path and roi_config_path.exists():
-            self.load_config(roi_config_path)
+        if roi_config is not None:
+            if isinstance(roi_config, dict):
+                self.load_from_dict(roi_config)
+            elif isinstance(roi_config, (Path, str)):
+                roi_config = Path(roi_config)
+                self.roi_config_path = roi_config
+                if roi_config.exists():
+                    self.load_config(roi_config)
+
+    def load_from_dict(self, config: Dict):
+        """Load ROI configuration from dictionary.
+
+        Args:
+            config: Dict with camera_id, resolution, and seats
+        """
+        self.camera_id = config.get('camera_id')
+        self.resolution = config.get('resolution')
+        self.seats = config.get('seats', [])
+
+        print(f"✅ Loaded ROI config: {len(self.seats)} seats")
 
     def load_config(self, config_path: Path):
         """Load ROI configuration from JSON.
@@ -42,11 +60,7 @@ class ROIMatcher:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
 
-            self.camera_id = config.get('camera_id')
-            self.resolution = config.get('resolution')
-            self.seats = config.get('seats', [])
-
-            print(f"✅ Loaded ROI config: {len(self.seats)} seats")
+            self.load_from_dict(config)
 
         except Exception as e:
             print(f"❌ Failed to load ROI config: {e}")
@@ -189,10 +203,29 @@ class ROIMatcher:
                         occupied = True
                         break
 
+            # Store matched detection for event logging
+            matched_detection = None
+            if occupied and person_detections:
+                # Find the detection that matched this seat
+                for person_box in person_detections:
+                    if seat_type == 'polygon':
+                        x1, y1, x2, y2 = person_box[:4]
+                        person_bottom_center = ((x1 + x2) / 2, y2)
+                        if self.point_in_polygon(person_bottom_center, seat['roi']):
+                            matched_detection = person_box
+                            break
+                    else:
+                        person_bbox = person_box[:4]
+                        iou = self.calculate_iou(person_bbox, tuple(seat['roi']))
+                        if iou > iou_threshold:
+                            matched_detection = person_box
+                            break
+
             results[seat_id] = {
                 'status': 'occupied' if occupied else 'empty',
                 'max_iou': max_iou,
-                'label': seat.get('label', f'Seat {seat_id}')
+                'label': seat.get('label', f'Seat {seat_id}'),
+                'matched_detection': matched_detection
             }
 
         return results
