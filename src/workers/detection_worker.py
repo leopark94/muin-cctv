@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from multiprocessing import Process, Queue, Event
 from collections import defaultdict
+from dateutil import parser as date_parser
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -170,8 +171,13 @@ class ChannelWorker:
                 # Get previous status from DB to calculate duration
                 db_status = self.db.get_seat_status(self.store_id, seat_id)
                 if db_status:
-                    if db_status.get('last_empty_time'):
-                        last_empty_time = db_status['last_empty_time']
+                    last_empty_time_raw = db_status.get('last_empty_time')
+                    if last_empty_time_raw:
+                        # Parse datetime string from Supabase
+                        if isinstance(last_empty_time_raw, str):
+                            last_empty_time = date_parser.parse(last_empty_time_raw)
+                        else:
+                            last_empty_time = last_empty_time_raw
                         vacant_duration = int((current_time - last_empty_time).total_seconds())
                     else:
                         last_empty_time = current_time
@@ -415,6 +421,27 @@ class MultiChannelWorker:
             self.stop()
 
 
+def parse_store_id_from_gosca(gosca_id: str) -> str:
+    """Parse store ID from GOSCA_STORE_ID environment variable.
+
+    Args:
+        gosca_id: GoSca store ID like 'Anding-Oryudongyeok-sca' or 'oryudong'
+
+    Returns:
+        Store ID like 'oryudong'
+    """
+    if not gosca_id:
+        return 'oryudong'
+
+    parts = gosca_id.split('-')
+    if len(parts) > 1:
+        # Format: 'Anding-Oryudongyeok-sca' -> 'oryudongyeok'
+        return parts[1].lower()
+    else:
+        # Already a simple ID like 'oryudong'
+        return gosca_id.lower()
+
+
 def main():
     """Main entry point."""
     import argparse
@@ -423,7 +450,7 @@ def main():
     parser.add_argument(
         '--store',
         type=str,
-        default=os.getenv('GOSCA_STORE_ID', '').split('-')[1].lower() if os.getenv('GOSCA_STORE_ID') else 'oryudong',
+        default=parse_store_id_from_gosca(os.getenv('GOSCA_STORE_ID', '')),
         help='Store ID (e.g., oryudong, gangnam)'
     )
     parser.add_argument(

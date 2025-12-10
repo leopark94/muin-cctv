@@ -43,6 +43,8 @@ class SupabaseClient:
     def create_store(self, store_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new store."""
         response = self.client.table('stores').insert(store_data).execute()
+        if not response.data:
+            raise ValueError(f"Failed to create store: {store_data.get('store_id')}")
         return response.data[0]
 
     # ============================================================================
@@ -71,6 +73,8 @@ class SupabaseClient:
     def create_seat(self, seat_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new seat."""
         response = self.client.table('seats').insert(seat_data).execute()
+        if not response.data:
+            raise ValueError(f"Failed to create seat: {seat_data.get('seat_id')}")
         return response.data[0]
 
     def update_seat_roi(
@@ -91,6 +95,8 @@ class SupabaseClient:
             .eq('seat_id', seat_id)
             .execute()
         )
+        if not response.data:
+            raise ValueError(f"Failed to update ROI for seat: {store_id}/{seat_id}")
         return response.data[0]
 
     # ============================================================================
@@ -134,6 +140,8 @@ class SupabaseClient:
             })
             .execute()
         )
+        if not response.data:
+            raise ValueError(f"Failed to update status for seat: {store_id}/{seat_id}")
         return response.data[0]
 
     def get_vacant_seats(
@@ -171,6 +179,8 @@ class SupabaseClient:
     def log_detection_event(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         """Log a detection event."""
         response = self.client.table('detection_events').insert(event_data).execute()
+        if not response.data:
+            raise ValueError("Failed to log detection event")
         return response.data[0]
 
     def get_recent_events(
@@ -234,6 +244,8 @@ class SupabaseClient:
     def upsert_hourly_stat(self, stat_data: Dict[str, Any]) -> Dict[str, Any]:
         """Upsert hourly occupancy statistic."""
         response = self.client.table('occupancy_stats').upsert(stat_data).execute()
+        if not response.data:
+            raise ValueError("Failed to upsert hourly stat")
         return response.data[0]
 
     # ============================================================================
