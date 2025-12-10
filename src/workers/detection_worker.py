@@ -14,7 +14,7 @@ from dateutil import parser as date_parser
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.config import settings
-from src.utils import RTSPClient
+from src.utils import RTSPClient, StructuredLogger, PerformanceMonitor
 from src.core import PersonDetector, ROIMatcher
 from src.database.supabase_client import get_supabase_client
 from dotenv import load_dotenv
@@ -53,6 +53,8 @@ class ChannelWorker:
         self.detector = None
         self.roi_matcher = None
         self.db = None
+        self.logger = None
+        self.perf_monitor = None
 
         # State tracking
         self.previous_occupancy = {}
@@ -60,7 +62,15 @@ class ChannelWorker:
 
     def initialize(self):
         """Initialize resources (must be called in worker process)."""
-        print(f"[Channel {self.channel_id}] Initializing...")
+        # Initialize logger first
+        self.logger = StructuredLogger(
+            component=f"channel_{self.channel_id}_worker",
+            store_id=self.store_id
+        )
+        self.logger.info("Initializing worker", channel=self.channel_id)
+
+        # Initialize performance monitor
+        self.perf_monitor = PerformanceMonitor(self.logger, report_interval=60)
 
         # RTSP client
         self.rtsp_client = RTSPClient(self.rtsp_url)
@@ -79,7 +89,11 @@ class ChannelWorker:
         channel_seats = [s for s in seats if s.get('channel_id') == self.channel_id]
 
         if not channel_seats:
-            print(f"[Channel {self.channel_id}] ⚠️  No seats configured for this channel")
+            self.logger.warning(
+                "No seats configured for channel",
+                channel=self.channel_id,
+                total_seats=len(seats)
+            )
             return False
 
         # Build ROI config for matcher
@@ -99,7 +113,10 @@ class ChannelWorker:
         }
 
         if not roi_config['seats']:
-            print(f"[Channel {self.channel_id}] ⚠️  No ROI polygons configured")
+            self.logger.warning(
+                "No ROI polygons configured",
+                channel=self.channel_id
+            )
             return False
 
         self.roi_matcher = ROIMatcher(roi_config)
@@ -113,21 +130,29 @@ class ChannelWorker:
             else:
                 self.previous_occupancy[seat_id] = 'empty'
 
-        print(f"[Channel {self.channel_id}] ✅ Initialized with {len(roi_config['seats'])} seats")
+        self.logger.info(
+            "Worker initialized successfully",
+            channel=self.channel_id,
+            seats_count=len(roi_config['seats']),
+            seat_ids=[s['id'] for s in roi_config['seats']]
+        )
         return True
 
     def connect_rtsp(self) -> bool:
         """Connect to RTSP stream."""
-        print(f"[Channel {self.channel_id}] Connecting to RTSP...")
+        self.logger.info("Connecting to RTSP stream", channel=self.channel_id)
         if self.rtsp_client.connect(timeout=15):
-            print(f"[Channel {self.channel_id}] ✅ RTSP connected")
+            self.logger.info("RTSP connected successfully", channel=self.channel_id)
             return True
         else:
-            print(f"[Channel {self.channel_id}] ❌ RTSP connection failed")
+            self.logger.error("RTSP connection failed", channel=self.channel_id)
             return False
 
     def process_frame(self, frame):
         """Process a single frame and update seat statuses."""
+        import time
+        start_time = time.time()
+
         # Detect persons
         detections = self.detector.detect_persons(frame)
 
@@ -136,6 +161,10 @@ class ChannelWorker:
             detections,
             iou_threshold=settings.IOU_THRESHOLD
         )
+
+        # Record performance
+        detection_time_ms = (time.time() - start_time) * 1000
+        self.perf_monitor.record_frame(detection_time_ms)
 
         # Process each seat
         current_time = datetime.now()
@@ -200,7 +229,13 @@ class ChannelWorker:
             try:
                 self.db.update_seat_status(self.store_id, seat_id, status_update)
             except Exception as e:
-                print(f"[Channel {self.channel_id}] ⚠️  Failed to update status for {seat_id}: {e}")
+                self.logger.warning(
+                    "Failed to update seat status",
+                    channel=self.channel_id,
+                    seat_id=seat_id,
+                    error=str(e)
+                )
+                self.perf_monitor.record_warning()
 
             # Log event if status changed
             if new_status != prev_status:
@@ -245,9 +280,23 @@ class ChannelWorker:
 
                 try:
                     self.db.log_detection_event(event_data)
-                    print(f"[Channel {self.channel_id}] 📝 {seat_id}: {prev_status} → {new_status}")
+                    self.logger.info(
+                        "Status changed",
+                        channel=self.channel_id,
+                        seat_id=seat_id,
+                        previous_status=prev_status,
+                        new_status=new_status,
+                        event_type=event_type,
+                        confidence=round(confidence, 3)
+                    )
                 except Exception as e:
-                    print(f"[Channel {self.channel_id}] ⚠️  Failed to log event for {seat_id}: {e}")
+                    self.logger.warning(
+                        "Failed to log detection event",
+                        channel=self.channel_id,
+                        seat_id=seat_id,
+                        error=str(e)
+                    )
+                    self.perf_monitor.record_warning()
 
             # Update previous state
             self.previous_occupancy[seat_id] = new_status
@@ -257,15 +306,16 @@ class ChannelWorker:
         try:
             # Initialize in worker process
             if not self.initialize():
-                print(f"[Channel {self.channel_id}] ❌ Initialization failed")
+                if self.logger:
+                    self.logger.error("Initialization failed", channel=self.channel_id)
                 return
 
             # Connect to RTSP
             if not self.connect_rtsp():
-                print(f"[Channel {self.channel_id}] ❌ RTSP connection failed")
+                self.logger.error("RTSP connection failed", channel=self.channel_id)
                 return
 
-            print(f"[Channel {self.channel_id}] 🚀 Starting monitoring loop...")
+            self.logger.info("Starting monitoring loop", channel=self.channel_id)
 
             # Main loop
             frame_count = 0
@@ -279,14 +329,26 @@ class ChannelWorker:
 
                     if frame is None:
                         error_count += 1
-                        print(f"[Channel {self.channel_id}] ⚠️  Failed to capture frame ({error_count}/{max_errors})")
+                        self.logger.warning(
+                            "Failed to capture frame",
+                            channel=self.channel_id,
+                            error_count=error_count,
+                            max_errors=max_errors
+                        )
+                        self.perf_monitor.record_error()
 
                         if error_count >= max_errors:
-                            print(f"[Channel {self.channel_id}] ❌ Too many errors, reconnecting...")
+                            self.logger.error(
+                                "Too many errors, attempting reconnection",
+                                channel=self.channel_id
+                            )
                             self.rtsp_client.disconnect()
                             time.sleep(5)
                             if not self.connect_rtsp():
-                                print(f"[Channel {self.channel_id}] ❌ Reconnection failed, exiting")
+                                self.logger.critical(
+                                    "Reconnection failed, exiting worker",
+                                    channel=self.channel_id
+                                )
                                 break
                             error_count = 0
 
@@ -304,38 +366,69 @@ class ChannelWorker:
                     if frame_count % 20 == 0:
                         occupied = sum(1 for s in self.previous_occupancy.values() if s == 'occupied')
                         total = len(self.previous_occupancy)
-                        print(f"[Channel {self.channel_id}] 📊 Frame {frame_count}: {occupied}/{total} occupied")
+                        self.logger.debug(
+                            "Processing progress",
+                            channel=self.channel_id,
+                            frame_count=frame_count,
+                            occupied=occupied,
+                            total_seats=total,
+                            occupancy_rate=round(occupied / total, 2) if total > 0 else 0
+                        )
 
                     # Wait for next snapshot
                     time.sleep(self.snapshot_interval)
 
                 except KeyboardInterrupt:
+                    self.logger.info("Received keyboard interrupt", channel=self.channel_id)
                     break
                 except Exception as e:
                     error_count += 1
-                    print(f"[Channel {self.channel_id}] ❌ Error: {e}")
+                    self.logger.error(
+                        "Unexpected error in processing loop",
+                        channel=self.channel_id,
+                        error=str(e),
+                        error_count=error_count
+                    )
+                    self.perf_monitor.record_error()
                     if error_count >= max_errors:
+                        self.logger.critical(
+                            "Max errors reached, exiting",
+                            channel=self.channel_id
+                        )
                         break
                     time.sleep(2)
 
         finally:
             # Cleanup
-            print(f"[Channel {self.channel_id}] 🛑 Shutting down...")
+            if self.logger:
+                self.logger.info("Shutting down worker", channel=self.channel_id)
+
+                # Final performance report
+                if self.perf_monitor:
+                    self.perf_monitor.report()
+
             if self.rtsp_client:
                 self.rtsp_client.disconnect()
 
-            # Log system event
-            if self.db:
+            # Log final statistics
+            if self.db and self.perf_monitor:
                 try:
+                    stats = self.perf_monitor.get_stats()
                     self.db.log_system_event(
                         store_id=self.store_id,
                         log_level='INFO',
                         component=f'channel_{self.channel_id}_worker',
                         message='Worker stopped',
-                        metadata={'frame_count': frame_count}
+                        metadata={
+                            'frame_count': frame_count,
+                            'uptime_hours': round(stats['uptime_seconds'] / 3600, 2),
+                            'avg_fps': round(stats['fps'], 2),
+                            'error_count': stats['error_count']
+                        }
                     )
-                except:
-                    pass
+                except Exception as e:
+                    if self.logger:
+                        self.logger.error("Failed to log final statistics", error=str(e))
 
 
 class MultiChannelWorker:
@@ -352,6 +445,12 @@ class MultiChannelWorker:
         self.channel_ids = channel_ids
         self.processes: List[Process] = []
         self.stop_event = Event()
+
+        # Initialize logger for orchestrator
+        self.logger = StructuredLogger(
+            component="multi_channel_orchestrator",
+            store_id=store_id
+        )
 
         # Load store config
         db = get_supabase_client()
@@ -377,6 +476,14 @@ class MultiChannelWorker:
         print(f"Channels: {self.channel_ids}")
         print(f"{'='*60}\n")
 
+        self.logger.info(
+            "Starting multi-channel worker",
+            store_id=self.store_id,
+            store_name=self.store['store_name'],
+            channel_ids=self.channel_ids,
+            channel_count=len(self.channel_ids)
+        )
+
         for channel_id in self.channel_ids:
             rtsp_url = self.get_rtsp_url(channel_id)
 
@@ -393,23 +500,40 @@ class MultiChannelWorker:
             self.processes.append(process)
 
             print(f"✅ Started worker for channel {channel_id} (PID: {process.pid})")
+            self.logger.info(
+                "Started channel worker",
+                channel_id=channel_id,
+                process_pid=process.pid,
+                process_name=process.name
+            )
             time.sleep(1)  # Stagger starts
 
         print(f"\n🚀 All {len(self.processes)} workers started!\n")
+        self.logger.info(
+            "All workers started successfully",
+            worker_count=len(self.processes)
+        )
 
     def stop(self):
         """Stop all workers."""
         print("\n🛑 Stopping all workers...")
+        self.logger.info("Stopping all workers", worker_count=len(self.processes))
         self.stop_event.set()
 
         for process in self.processes:
             process.join(timeout=10)
             if process.is_alive():
                 print(f"⚠️  Force terminating {process.name}")
+                self.logger.warning(
+                    "Force terminating worker",
+                    process_name=process.name,
+                    process_pid=process.pid
+                )
                 process.terminate()
                 process.join(timeout=5)
 
         print("✅ All workers stopped\n")
+        self.logger.info("All workers stopped successfully")
 
     def wait(self):
         """Wait for all workers to complete."""
