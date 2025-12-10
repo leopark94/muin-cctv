@@ -1,74 +1,11 @@
 """Configuration settings for the CCTV seat detection system."""
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
-
-class StoreConfig:
-    """Store-specific configuration."""
-
-    def __init__(self, store_id: str):
-        """Initialize store configuration.
-
-        Args:
-            store_id: Store identifier (e.g., 'oryudong', 'gangnam')
-        """
-        self.store_id = store_id
-        self._prefix = store_id.upper()
-
-    def _get_env(self, key: str, default: str = "") -> str:
-        """Get environment variable with store-specific fallback.
-
-        First tries {STORE_ID}_{KEY}, then falls back to {KEY}.
-        """
-        store_specific = os.getenv(f"{self._prefix}_{key}")
-        if store_specific is not None:
-            return store_specific
-        return os.getenv(key, default)
-
-    @property
-    def rtsp_host(self) -> str:
-        return self._get_env("RTSP_HOST", "localhost")
-
-    @property
-    def rtsp_port(self) -> str:
-        return self._get_env("RTSP_PORT", "8554")
-
-    @property
-    def rtsp_username(self) -> str:
-        return self._get_env("RTSP_USERNAME", "admin")
-
-    @property
-    def rtsp_password(self) -> str:
-        return self._get_env("RTSP_PASSWORD", "")
-
-    @property
-    def active_channels(self) -> List[int]:
-        """Get list of active channel numbers."""
-        channels_str = self._get_env("ACTIVE_CHANNELS", "")
-        if not channels_str:
-            return list(range(1, 17))  # Default: all 16 channels
-        try:
-            channels = [int(ch.strip()) for ch in channels_str.split(",")]
-            return sorted([ch for ch in channels if 1 <= ch <= 16])
-        except ValueError:
-            return list(range(1, 17))
-
-    def get_rtsp_url(self, channel_id: int) -> str:
-        """Generate RTSP URL for a specific channel."""
-        path = f"live_{channel_id:02d}"
-        return f"rtsp://{self.rtsp_username}:{self.rtsp_password}@{self.rtsp_host}:{self.rtsp_port}/{path}"
-
-    def __repr__(self) -> str:
-        return (
-            f"StoreConfig(store_id='{self.store_id}', "
-            f"rtsp_host='{self.rtsp_host}', "
-            f"channels={self.active_channels})"
-        )
 
 
 class Settings:
@@ -84,28 +21,10 @@ class Settings:
     # Current store (from STORE_ID env variable)
     STORE_ID = os.getenv("STORE_ID", "oryudong")
 
-    # RTSP settings (backward compatibility - use StoreConfig for multi-store)
+    # RTSP credentials (공통 - 보안상 env에서만 관리)
+    # 각 지점 NVR 비밀번호가 다르면 DB에 저장하거나 별도 비밀 관리 필요
     RTSP_USERNAME = os.getenv("RTSP_USERNAME", "admin")
     RTSP_PASSWORD = os.getenv("RTSP_PASSWORD", "")
-    RTSP_HOST = os.getenv("RTSP_HOST", "localhost")
-    RTSP_PORT = os.getenv("RTSP_PORT", "8554")
-    RTSP_PATH = os.getenv("RTSP_PATH", "live_12")
-
-    # Active channels (comma-separated string, e.g., "1,2,3,12")
-    ACTIVE_CHANNELS_STR = os.getenv("ACTIVE_CHANNELS", "")
-
-    @property
-    def ACTIVE_CHANNELS(self):
-        """Get list of active channel numbers from env variable."""
-        if not self.ACTIVE_CHANNELS_STR:
-            # If not set, use all 16 channels
-            return list(range(1, 17))
-        try:
-            channels = [int(ch.strip()) for ch in self.ACTIVE_CHANNELS_STR.split(",")]
-            return sorted([ch for ch in channels if 1 <= ch <= 16])
-        except:
-            # If parsing fails, use all channels
-            return list(range(1, 17))
 
     # Model settings
     YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8n.pt")
@@ -129,31 +48,19 @@ class Settings:
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     DRY_RUN = os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes")
 
-    def get_rtsp_url(self, path: str = None) -> str:
-        """Generate RTSP URL.
+    def get_rtsp_url(self, host: str, port: int, channel_id: int) -> str:
+        """Generate RTSP URL for a channel.
 
         Args:
-            path: RTSP path (e.g., 'live_12', 'ch1'). If None, uses RTSP_PATH from env.
+            host: RTSP server host
+            port: RTSP server port
+            channel_id: Channel number (1-16)
 
         Returns:
             Complete RTSP URL
         """
-        if path is None:
-            path = self.RTSP_PATH
-        return f"rtsp://{self.RTSP_USERNAME}:{self.RTSP_PASSWORD}@{self.RTSP_HOST}:{self.RTSP_PORT}/{path}"
-
-    def get_store_config(self, store_id: Optional[str] = None) -> StoreConfig:
-        """Get store-specific configuration.
-
-        Args:
-            store_id: Store identifier. If None, uses STORE_ID from env.
-
-        Returns:
-            StoreConfig instance with store-specific settings
-        """
-        if store_id is None:
-            store_id = self.STORE_ID
-        return StoreConfig(store_id)
+        path = f"live_{channel_id:02d}"
+        return f"rtsp://{self.RTSP_USERNAME}:{self.RTSP_PASSWORD}@{host}:{port}/{path}"
 
     def ensure_directories(self):
         """Create necessary directories if they don't exist."""

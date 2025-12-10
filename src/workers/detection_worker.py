@@ -574,23 +574,44 @@ def main():
     parser.add_argument(
         '--store',
         type=str,
-        default=parse_store_id_from_gosca(os.getenv('GOSCA_STORE_ID', '')),
+        default=os.getenv('STORE_ID', 'oryudong'),
         help='Store ID (e.g., oryudong, gangnam)'
     )
     parser.add_argument(
         '--channels',
         type=str,
         default=None,
-        help='Comma-separated channel IDs (e.g., 1,2,3). Default: all active channels'
+        help='Comma-separated channel IDs (e.g., 1,2,3). Default: from database'
     )
 
     args = parser.parse_args()
 
-    # Parse channels
+    # Get store config from database
+    db = get_supabase_client()
+    store = db.get_store(args.store)
+
+    if not store:
+        print(f"❌ Store '{args.store}' not found in database")
+        print("\nAvailable stores:")
+        for s in db.list_stores():
+            print(f"  - {s['store_id']}: {s['store_name']}")
+        sys.exit(1)
+
+    # Parse channels: CLI > DB > default
     if args.channels:
+        # CLI에서 명시적으로 지정
         channel_ids = [int(c.strip()) for c in args.channels.split(',')]
+    elif store.get('active_channels'):
+        # DB에서 가져오기
+        channel_ids = store['active_channels']
     else:
-        channel_ids = settings.ACTIVE_CHANNELS
+        # 기본값: 1부터 total_channels까지
+        total = store.get('total_channels', 4)
+        channel_ids = list(range(1, total + 1))
+
+    print(f"\n📍 Store: {store['store_name']} ({args.store})")
+    print(f"📺 RTSP: {store.get('rtsp_host')}:{store.get('rtsp_port')}")
+    print(f"📡 Channels: {channel_ids}\n")
 
     # Create and start worker
     worker = MultiChannelWorker(args.store, channel_ids)

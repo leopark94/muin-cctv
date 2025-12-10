@@ -11,8 +11,9 @@ CREATE TABLE stores (
     store_id VARCHAR(50) PRIMARY KEY,           -- 'oryudong', 'gangnam', etc.
     gosca_store_id VARCHAR(100) NOT NULL,       -- 'Anding-Oryudongyeok-sca'
     store_name VARCHAR(100) NOT NULL,           -- '앤딩스터디카페 오류동역점'
-    rtsp_host VARCHAR(100),                     -- RTSP 서버 주소
+    rtsp_host VARCHAR(100),                     -- RTSP 서버 주소 (NVR IP)
     rtsp_port INT DEFAULT 8554,
+    active_channels INT[] DEFAULT ARRAY[1,2,3,4],  -- 사용할 채널 목록
     total_channels INT DEFAULT 16,
     is_active BOOLEAN DEFAULT TRUE,
     metadata JSONB,                             -- 추가 정보 (주소, 연락처 등)
@@ -23,10 +24,10 @@ CREATE TABLE stores (
 COMMENT ON TABLE stores IS '스터디카페 지점 정보';
 
 -- 샘플 데이터
-INSERT INTO stores (store_id, gosca_store_id, store_name, rtsp_host, total_channels) VALUES
-    ('oryudong', 'Anding-Oryudongyeok-sca', '앤딩스터디카페 오류동역점', '218.50.241.157', 16),
-    ('gangnam', 'Anding-Gangnam-sca', '앤딩스터디카페 강남점', '192.168.1.100', 12),
-    ('hongdae', 'Anding-Hongdae-sca', '앤딩스터디카페 홍대점', '192.168.2.100', 8)
+INSERT INTO stores (store_id, gosca_store_id, store_name, rtsp_host, active_channels, total_channels) VALUES
+    ('oryudong', 'Anding-Oryudongyeok-sca', '앤딩스터디카페 오류동역점', '218.50.241.157', ARRAY[1,2,3,4], 16),
+    ('gangnam', 'Anding-Gangnam-sca', '앤딩스터디카페 강남점', '192.168.1.100', ARRAY[1,2,3,4,5,6], 12),
+    ('hongdae', 'Anding-Hongdae-sca', '앤딩스터디카페 홍대점', '192.168.2.100', ARRAY[1,2,3,4], 8)
 ON CONFLICT (store_id) DO NOTHING;
 
 -- ============================================================================
